@@ -38,7 +38,7 @@ int main(int argc, char **argv)
   mol mol = {.info.text = NULL};
   int r = -1; // if I forgot to uncomment a mol, this will error out by default
 
-  // r = create_mol(&mol, "\0HO-[:90](=[:150]O)-[:30]N(-[:90]Ph)-[::-60](-[:-90]NO2)-[::60](-[:90]C6H5)-[::-60](=[:30]O)-[:-90]OH");
+  r = create_mol(&mol, "\0HO-[:90](=[:150]O)-[:30]N(-[:90]Ph)-[::-60](-[:-90]NO2)-[::60](-[:90]C6H5)-[::-60](=[:30]O)-[:-90]OH");
   // r = create_mol(&mol, "\0[:20]NO2-[:60](-[:120]Cl)=[:0](-[:60]Cl)-[:-60]");
   // r = create_mol(&mol, "\0(-[:90]Cl)(-[:-120]Cl)(<[:-60]Cl)(<:[:-30]Cl)-");
   // r = create_mol(&mol, "\0A-B(-[:45]W-X)-C");
@@ -47,7 +47,7 @@ int main(int argc, char **argv)
   // r = create_mol(&mol, "\0(-[:-150]X*6(-=-=-=))-[:-30](<[:-90]CH3)-[:30]N-[:-30]CH3");
   // r = create_mol(&mol, "\0H-C~N");
   // r = create_mol(&mol, "\0HC~CH");
-  r = create_mol(&mol, "\0-**5(---)-[:90]");
+  // r = create_mol(&mol, "\0-**5(---)-[:90]");
   // r = create_mol(&mol, "\0X*5((-A=B-C)-C(-D-E)-C(=)-C(-F)-C(-G=)-)");
   // r = create_mol(&mol, "\0*6(-*5(-O--O-)=-=-=)");
   // r = create_mol(&mol, "\0A-B([:60]-D-E)([::-30]-X-Y)-C");
@@ -71,34 +71,16 @@ int main(int argc, char **argv)
 
   Font Fira = LoadFont(FIRA_CODE_FONT_PATH);
 
-  BeginDrawing();
-  ClearBackground(RAYWHITE);
-
-  if (DrawMol(&mol, (Vector2){300, 400}, 0, Fira))
-  {
-    eprintf("Drawing failed !!!\n");
-    return 1;
-  }
-
-  EndDrawing();
-
   while (!WindowShouldClose())
   {
     int keycode;
-    if ((keycode = GetKeyPressed()) == 0)
-    {
-      BeginDrawing();
-      EndDrawing();
-      continue;
-    }
 
-    do
+    while ((keycode = GetKeyPressed()) != 0)
       if (handle_key_press(keycode, &mol.info.cursor, mol.info.text))
       {
         eprintf("Handling pressed keys has failed !!\n");
         return 1;
       }
-    while ((keycode = GetKeyPressed()) != 0);
 
     BeginDrawing();
     ClearBackground(RAYWHITE);
