@@ -1,626 +1,233 @@
-#include <stdio.h>
 #include <ctype.h>
 
 #include "raylib.h"
 
+#include "move_ptr.h"
 #include "cursor.h"
-#include "mol.h"
 #include "log.h"
+#include "mol.h"
 
-static int cursor_skip_to_next_atom(cursor *cursor);
-static int cursor_skip_to_first_branch(cursor *cursor);
-static int cursor_skip_to_cycle_beginning(cursor *cursor);
-static int cursor_skip_prev_to_cycle_beginning(cursor *cursor);
+int enter_cycle(char **s, uint32_t *length);
+int cursor_enter_cycle(cursor *cursor, CURSOR_MOVE_SELECT mode);
+int cursor_enter_branch(cursor *cursor, CURSOR_MOVE_SELECT mode);
 
-int skip_next_angle(char **s);
-int skip_next_bond(char **s);
-int skip_next_branch(char **s);
-int skip_next_atom(char **s);
-int skip_to_cycle_beginning(char **s, uint32_t *n);
+int skip_prev_out_branch_start(char **s);
+int cursor_skip_prev_out_branch_start(cursor *cursor);
 
-int skip_prev_angle(char **s);
-int skip_prev_bond(char **s);
-int skip_prev_branch(char **s);
-int skip_prev_atom(char **s);
+int cursor_cycle_back_to_start_atom(cursor *cursor);
+int cursor_skip_to_next_atom(cursor *cursor);
+int cursor_skip_prev_out_cycle(cursor *cursor);
+int cursor_skip_prev_to_last_atom(cursor *cursor);
+int cursor_skip_to_first_branch(cursor *cursor, CURSOR_MOVE_SELECT mode);
+int cursor_skip_to_last_branch(cursor *cursor, CURSOR_MOVE_SELECT mode);
 
-/*
- * returns the keycode iff it wasn't interpreted, else returns 0
- */
-int handle_key_press(int keycode, cursor *cursor, char *mol)
+int handle_key_press(int keycode, cursor *cursor)
 {
-  if (cursor == NULL)
-  {
-    eprintf("Provided cursor pointer was NULL!\n");
-    return -1;
-  }
-
-  if (mol == NULL)
-  {
-    eprintf("Provided molecule string was NULL!\n");
-    return -1;
-  }
-
   switch (keycode)
   {
   case KEY_J:
-    if (cursor->mode == MODE_MOVE)
+    if (cursor->mode == MODE_BR_SELECT)
     {
-      if (cursor_skip_to_next_atom(cursor))
+      cursor->pos = cursor->branch;
+      if (cursor_enter_branch(cursor, MOVE_POS))
         return -1;
-    }
-    else if (cursor->mode == MODE_BR_SELECT)
-    {
-      cursor->pos = cursor->brptr;
-      cursor->cycles_length[0] = cursor->brptr_cycle;
-      cursor->in_cycle += (cursor->brptr_cycle > 0);
-      ++(cursor->pos); // skip the '('
-      if (*cursor->pos == '[')
-        if (skip_next_angle(&cursor->pos))
-          return -1;
-      if (skip_next_bond(&cursor->pos))
-        return -1;
+
       cursor->mode = MODE_MOVE;
-    }
-    else
-      __builtin_unreachable();
-    break;
-
-  case KEY_K:
-    cursor->mode = MODE_MOVE;
-    char *old = cursor->pos;
-    --(cursor->pos);
-    if (*cursor->pos == '\0')
-    // first atom of the molecule
-    {
-      ++(cursor->pos);
-      return 0;
-    }
-    if (skip_prev_bond(&cursor->pos))
-    {
-      cursor->pos = old;
-      return 0;
-    }
-
-    // skip branch angle
-    if (*cursor->pos == ']')
-    {
-      char *saved_pos = cursor->pos;
-      skip_prev_angle(&cursor->pos);
-      if (*cursor->pos != '(')
-        cursor->pos = saved_pos;
-    }
-
-    if (*cursor->pos == '(' && !isdigit(cursor->pos[-1]))
-      // exit branch if we are at the edge of one
-      --(cursor->pos);
-
-    while (*cursor->pos != '\0' && *cursor->pos == ')')
-    {
-      if (skip_prev_branch(&cursor->pos))
-        return -1;
-    }
-
-    if (cursor->pos[1] == '(' && isdigit(cursor->pos[0]))
-    {
-      --(cursor->in_cycle);
-
-      --(cursor->pos); // skip said '('
-      // this is the first bond of a cycle
-      // we need to leave the cycle to get to the attaching atom of the cycle
-      while (*cursor->pos != '\0' && isdigit(*cursor->pos))
-        --(cursor->pos);
-
-      if (*cursor->pos != '*')
-      {
-        eprintf("Expected '*' as Cycle start symbol, but got %c\n", *cursor->pos);
-        return -1;
-      }
-      --(cursor->pos); // skip said '*'
-
-      if (*cursor->pos == '*')
-        --(cursor->pos); // skip '*' for an arced cycle
-
-      if (skip_prev_atom(&cursor->pos))
-        return -1;
-
       break;
     }
 
-    // if (IS_SPECIAL_CHAR(cursor->pos[-1]))
-    //   ++(cursor->pos);
+    if (cursor->pos.cycle_cnt == cursor->pos.brnch_cnt && cursor->pos.cycle_idx == cursor->pos.cycle_length - 1)
+    {
+      if (cursor_cycle_back_to_start_atom(cursor))
+        return -1;
+      break;
+    }
 
-    if (skip_prev_atom(&cursor->pos))
+    if (cursor_skip_to_next_atom(cursor))
+      return -1;
+
+    break;
+
+  case KEY_K:
+    if (cursor_skip_prev_to_last_atom(cursor))
       return -1;
     break;
 
   case KEY_L:
     if (cursor->mode != MODE_BR_SELECT)
     {
-      if (cursor_skip_to_first_branch(cursor))
+      if (cursor_skip_to_first_branch(cursor, MOVE_BRPTR))
         return -1;
+      break;
     }
-    else
+
+    // mode MODE_BR_SELECT
+    if (skip_next_branch(&cursor->branch.pos))
+      return -1;
+
+    if (*cursor->branch.pos != '(')
     {
-      if (skip_next_branch(&cursor->brptr))
+      // fell of the last branch
+      cursor->branch.pos = cursor->pos.pos;
+      if (skip_next_atom(&cursor->branch.pos))
         return -1;
-      if (*cursor->brptr != '(')
-      {
-        // fell of the last branch -> go back to the first branch
-        cursor->brptr = cursor->pos;
-        if (skip_next_atom(&cursor->brptr))
-          return -1;
-      }
     }
+
     break;
 
   case KEY_H:
     if (cursor->mode != MODE_BR_SELECT)
     {
-      cursor->brptr = cursor->pos;
-      if (skip_next_atom(&cursor->brptr))
+      cursor->branch = cursor->pos;
+      if (skip_next_atom(&cursor->branch.pos))
         return -1;
 
-      if (*cursor->brptr != '(')
+      if (*cursor->pos.pos != '(' && *cursor->pos.pos != '*')
       {
-        cursor->brptr = cursor->pos;
+        // there is no branch/cycle
+        cursor->branch = cursor->pos;
         cursor->mode = MODE_MOVE;
+        break;
       }
-      else
-      {
-        cursor->mode = MODE_BR_SELECT;
 
-        // skip to the last branch
-        char *prevpos;
-        do
-        {
-          prevpos = cursor->brptr;
-          if (skip_next_branch(&cursor->brptr))
-            return -1;
-        } while (*cursor->brptr == '(');
-        cursor->brptr = prevpos;
-      }
-    }
-    else
-    {
-      --(cursor->brptr);
-      if (*cursor->brptr != ')')
-      {
-        ++(cursor->brptr);
-        // skip to the last branch
-        char *prevpos;
-        do
-        {
-          prevpos = cursor->brptr;
-          if (skip_next_branch(&cursor->brptr))
-            return -1;
-        } while (*cursor->brptr == '(');
-        cursor->brptr = prevpos;
-      }
-      else if (skip_prev_branch(&cursor->brptr))
+      if (cursor_skip_to_last_branch(cursor, MOVE_BRPTR))
         return -1;
+
+      break;
     }
+
+    /*
+      (aaa...aaa)(bbb..bbb)
+                 ^
+                 |- cursor->branch.pos
+    */
+    --(cursor->branch.pos); // to check if there is a branch before or not
+    if (*cursor->branch.pos != ')')
+    {
+      if (cursor_skip_to_last_branch(cursor, MOVE_BRPTR))
+        return -1;
+      break;
+    }
+
+    if (skip_prev_branch(&cursor->branch.pos))
+      return -1;
+
     break;
 
   default:
-    return keycode;
+    break;
   }
 
-  printf("%i|%u/%u: %s\t|\t %i: %s\n", cursor->in_cycle, cursor->curr_cycle_idx, cursor->cycles_length[0], cursor->pos, cursor->brptr_cycle, cursor->brptr);
+  printf("br%u:cy%u|%u/%u: %s\t|\t br%u:cy%u|%u/%u: %s\n",
+         cursor->pos.brnch_cnt, cursor->pos.cycle_cnt, cursor->pos.cycle_idx, cursor->pos.cycle_length, cursor->pos.pos,
+         cursor->branch.brnch_cnt, cursor->branch.cycle_cnt, cursor->branch.cycle_idx, cursor->branch.cycle_length, cursor->branch.pos);
 
   return 0;
 }
 
-static int cursor_skip_to_next_atom(cursor *cursor)
-{
-  cursor->mode = MODE_MOVE;
-  char *old = cursor->pos;
-  if (skip_next_atom(&cursor->pos))
-    return -1;
-
-  if (*cursor->pos == '\0' || *cursor->pos == ')')
-  {
-    cursor->pos = old;
-    return 0;
-  }
-
-  if (*cursor->pos == '*')
-  {
-    ++(cursor->pos);
-
-    if (*cursor->pos == '*')
-      ++(cursor->pos); // skip arced cycle's marker
-
-    int chars_read;
-    sscanf(cursor->pos, "%*i%n", &chars_read);
-    cursor->pos += chars_read;
-  }
-
-  uint8_t skiped_branch = 0;
-  while (*cursor->pos == '(')
-  {
-    skiped_branch = 1;
-    if (skip_next_branch(&cursor->pos))
-      return -1;
-  }
-
-  if (*cursor->pos == '\0')
-  {
-    cursor->pos = old;
-    if (skiped_branch)
-    {
-      if (*cursor->pos == '*')
-      {
-        ++(cursor->pos);
-
-        if (*cursor->pos == '*')
-          ++(cursor->pos); // skip arced cycle's marker
-
-        int chars_read;
-        sscanf(cursor->pos, "%*i%n", &chars_read);
-        cursor->pos += chars_read;
-
-        ++cursor->in_cycle;
-      }
-
-      if (*cursor->pos != '(')
-      {
-        eprintf("Expected '(' as branch/cycle's start character, but got '%c'\n", *cursor->pos);
-        return -1;
-      }
-      ++(cursor->pos);
-
-      if (*cursor->pos == '[')
-        if (skip_next_angle(&cursor->pos))
-          return -1;
-
-      if (skip_next_bond(&cursor->pos))
-        return -1;
-    }
-
-    return 0;
-  }
-
-  if (skip_next_bond(&cursor->pos))
-    return -1;
-
-  if (cursor->in_cycle)
-    ++(cursor->curr_cycle_idx);
-
-  if (*cursor->pos == ')' && cursor->in_cycle)
-    cursor_skip_prev_to_cycle_beginning(cursor);
-
-  return 0;
-}
-
-static int cursor_skip_to_first_branch(cursor *cursor)
-{
-  cursor->brptr = cursor->pos;
-
-  if (skip_next_atom(&cursor->brptr))
-    return -1;
-
-  if (*cursor->brptr == '*')
-  {
-    if (skip_to_cycle_beginning(&cursor->brptr, &cursor->brptr_cycle))
-      return -1;
-    --(cursor->brptr);
-  }
-
-  cursor->mode = MODE_MOVE;
-  if (*cursor->brptr != '(')
-    cursor->brptr = cursor->pos;
-  else
-    cursor->mode = MODE_BR_SELECT;
-
-  return 0;
-}
-static int cursor_skip_to_cycle_beginning(cursor *cursor)
-{
-  if (skip_to_cycle_beginning(&cursor->pos, &cursor->cycles_length[0]))
-    return -1;
-  ++(cursor->in_cycle);
-
-  return 0;
-}
-
-int skip_to_cycle_beginning(char **s, uint32_t *n)
+int enter_cycle(char **s, uint32_t *length)
 {
   if (**s != '*')
   {
-    eprintf("Expected '*' as start symbol for Cycle, but got '%c'\n", **s);
+    eprintf("Expected '*' as cycle start character, but got '%c'\n", **s);
     return -1;
   }
-  ++(*s); // skip said '*'
 
+  ++(*s); // skip the '*'
   if (**s == '*')
-    ++(*s);
-
-  if (**s == '[')
   {
-    do
-      ++(*s);
-    while (**s != ']' && **s != '\0');
-    ++(*s); // skip the final ']'
-  }
+    ++(*s); // skip arced cycle's marker
 
-  int char_count = 0;
-  if (sscanf(*s, "%u%n", n, &char_count) < 1)
-  {
-    eprintf("Could not read the length of the cycle\n"
-            "\t" COLORED_INFO " current ptr: \"%s\"\n",
-            *s);
-    return -1;
-  }
-  *s += char_count;
-
-  if (**s != '(')
-  {
-    eprintf("Expected '(' to start Cycle's code, but got '%c'\n", **s);
-    return -1;
-  }
-  ++(*s); // skip said '('
-
-  return 0;
-}
-
-static int cursor_skip_prev_to_cycle_beginning(cursor *cursor)
-{
-  if (skip_to_closing_paren(&cursor->pos))
-    return -1;
-
-  if (skip_prev_branch(&cursor->pos))
-    return -1;
-
-  cursor->pos += 2;
-
-  // // skip side number
-  // while (isdigit(*cursor->pos))
-  //   --(cursor->pos);
-
-  // if (*cursor->pos == ']')
-  // {
-  //   // skip arc params
-  //   while (*cursor->pos != '[')
-  //     --(cursor->pos);
-  //   --(cursor->pos);
-
-  //   if (*cursor->pos != '*')
-  //   {
-  //     eprintf("Expected '*' as arced Cycle's maker, but got '%c'\n", *cursor->pos);
-  //     return -1;
-  //   }
-  // }
-
-  // if (*cursor->pos != '*')
-  // {
-  //   eprintf("Expected '*' as Cycle's start marker, but got '%c'\n", *cursor->pos);
-  //   return -1;
-  // }
-  // --(cursor->pos);
-
-  // if (*cursor->pos == '*')
-  //   --(cursor->pos); // skip arced cycle's '*'
-
-  // if (skip_prev_atom(&cursor->pos))
-  //   return -1;
-
-  return 0;
-}
-
-int skip_to_closing_paren(char **s)
-{
-  // paren starts at 1 because one was opened before
-  for (uint32_t paren = 1; paren > 0; ++(*s))
-  {
     if (**s == '\0')
     {
-      eprintf("string ended before reaching closing parentesis !\n");
+      eprintf("Molecule ended before cycle's code !\n");
       return -1;
     }
 
-    if (**s == '(')
-      ++paren;
-    else if (**s == ')')
-      --paren;
+    // skip the data of arced cycle
+    if (**s == '[')
+    {
+      do
+        ++(*s);
+      while (**s != ']' && **s != '\0');
+      ++(*s); // skip the final ']'
+    }
   }
-  --(*s);
+
+  int chars_read;
+  if (sscanf(*s, "%u%n", length, &chars_read) < 1)
+  {
+    eprintf("Could not read the length of the cycle\n"
+            "\t" COLORED_INFO "on ptr: \"%s\"\n",
+            *s);
+    return -1;
+  }
+  *s += chars_read;
+
+  return 0;
+}
+int cursor_enter_cycle(cursor *cursor, CURSOR_MOVE_SELECT mode)
+{
+  cursor_cycle_info *curr;
+  switch (mode)
+  {
+  case MOVE_POS:
+    curr = &cursor->pos;
+    break;
+  case MOVE_BRPTR:
+    curr = &cursor->branch;
+    break;
+  }
+
+  if (enter_cycle(&curr->pos, &curr->cycle_length))
+    return -1;
+
+  ++(curr->cycle_cnt);
+  curr->cycle_idx = 1;
+  return 0;
+}
+
+int cursor_enter_branch(cursor *cursor, CURSOR_MOVE_SELECT mode)
+{
+  cursor_cycle_info *curr;
+  switch (mode)
+  {
+  case MOVE_POS:
+    curr = &cursor->pos;
+    break;
+  case MOVE_BRPTR:
+    curr = &cursor->branch;
+    break;
+  }
+
+  if (*curr->pos != '(')
+  {
+    eprintf("Expected '(' as branch start character, but got '%c'\n", *curr->pos);
+    return -1;
+  }
+  ++(curr->pos);
+
+  if (*curr->pos == '[')
+    skip_next_angle(&curr->pos);
+
+  if (skip_next_bond(&curr->pos))
+    return -1;
+
+  ++(curr->brnch_cnt);
 
   return 0;
 }
 
-// ----------- skip next ----------
-
-int skip_next_angle(char **s)
+int skip_prev_out_branch_start(char **s)
 {
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer was NULL !\n");
-    return -1;
-  }
+  int paren = 1; // for the closing paren already openned
 
-  if (**s != '[')
-  {
-    eprintf("Expected '[' as angle start symbol, but got %c\n", **s);
-    return -1;
-  }
-  ++(*s); // skip '['
-
-  while (**s != ']')
-    ++(*s);
-
-  ++(*s); // skip the final ']'
-
-  return 0;
-}
-
-int skip_next_bond(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer was NULL !\n");
-    return -1;
-  }
-
-  if (!IS_BOND_CHAR(**s))
-  {
-    eprintf("Unexpected bond character : %c\n", **s);
-    return -1;
-  }
-  if (IS_CRAM_BOND_CHAR(**s) && (*s)[1] == ':')
-    ++(*s); // skip ':'
-  ++(*s);   // skip '-' or '=' or '~' or '<' or '>'
-
-  if (**s != '[')
-    return 0; // bond with no angle
-
-  return skip_next_angle(s);
-}
-
-int skip_next_branch(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer was NULL !\n");
-    return -1;
-  }
-
-  if (**s != '(')
-  {
-    eprintf("Expected '(' to start the branch but got %c\n", **s);
-    return -1;
-  }
-  ++(*s);
-
-  if (skip_to_closing_paren(s))
-    return -1;
-  ++(*s);
-  return 0;
-}
-
-int skip_next_atom(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer was NULL !\n");
-    return -1;
-  }
-
-  while (**s != 0 && !IS_SPECIAL_CHAR(**s))
-    ++(*s);
-
-  return 0;
-}
-
-// ------- skip prev --------------
-
-/*
- * (*s) should point to the last char of the angle : ']'
- * (*s) will point to the first char before the angle : right before '['
- */
-int skip_prev_angle(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer was NULL !\n");
-    return -1;
-  }
-
-  if (**s == '\0')
-  {
-    eprintf("Provided string ended before angle started\n");
-    return -1;
-  }
-
-  if (**s != ']')
-  {
-    eprintf("Expected ']' as closing symbol for angle, but got %c\n", **s);
-    return -1;
-  }
-  --(*s); // skip said ']'
-
-  while (**s != '\0' && **s != '[')
-    --(*s);
-
-  if (**s != '[')
-  {
-    eprintf("Expected '[' as openning symbol for angle, but got %c\n", **s);
-    return -1;
-  }
-  --(*s); // skip said '['
-
-  return 0;
-}
-
-/*
- * (*s) should point to the last char of the bond (usually ']')
- */
-int skip_prev_bond(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer is NULL !\n");
-    return -1;
-  }
-
-  if (**s == '\0')
-  {
-    eprintf("Provided string ended before any bond\n");
-    return -1;
-  }
-
-  if (**s == ']')
-  {
-    if (skip_prev_angle(s))
-      return -1;
-  }
-
-  if (**s == ':')
-    --(*s); // skip the ':' from dashed cram bonds
-
-  if (!IS_BOND_CHAR(**s))
-  {
-    eprintf("Unexpected bond char : %c\n", **s);
-    return -1;
-  }
-  --(*s);
-
-  return 0;
-}
-
-/*
- * (*s) should point to the closing ')' char of the branch
- * (*s) will point to the first char before the openning '(' char of the branch
- */
-int skip_prev_branch(char **s)
-{
-  if (s == NULL || *s == NULL)
-  {
-    eprintf("Provided string or string pointer is NULL !\n");
-    return -1;
-  }
-
-  if (**s == '\0')
-  {
-    eprintf("Provided string ended before any branch\n");
-    return -1;
-  }
-
-  if (**s != ')')
-  {
-    eprintf("Expected ')' as an ending for a branch, but got %c\n", **s);
-    return -1;
-  }
-  --(*s); // skip said '('
-
-  uint32_t paren = 1; // 1 to account for this first paren
-
-  while (paren > 0 && **s != '\0')
+  while (**s != '\0' && paren > 0)
   {
     if (**s == ')')
       ++paren;
     else if (**s == '(')
       --paren;
-
     --(*s);
   }
 
@@ -628,22 +235,311 @@ int skip_prev_branch(char **s)
 }
 
 /*
- * (*s) should point to the last char of the atom
- *    if atom is empty and is at the start of the molecule, (*s) is allowed to point to '\0'
- * (*s) will point to the first char of the atom
+ * *s should point to the end of an atom or branch
+ * sets count to the number of atom + bond groups encountered before reaching the start of the branch
  */
-int skip_prev_atom(char **s)
+int skip_prev_out_branch_start_count(char **s, uint32_t *count)
 {
-  if (s == NULL || *s == NULL)
+  *count = 1;
+  while (**s != '\0')
   {
-    eprintf("Provided string or string pointer is NULL !\n");
+    while (**s == ')' && **s != '\0')
+      if (skip_prev_branch(s))
+        return -1;
+
+    if (!IS_SPECIAL_CHAR(**s))
+      if (skip_prev_atom(s))
+        return -1;
+
+    // skip bond, but we cant use `skip_prev_bond` for error handling
+
+    if (**s == '[')
+      if (skip_prev_angle(s))
+        return -1;
+
+    if (IS_BOND_CHAR(**s) && **s != '\0')
+      --(*s);
+    else if (**s != '(')
+    {
+      eprintf("Expected '(' as branch/cycle's start char, but got '%c'\n", **s);
+      return -1;
+    }
+    ++(*count);
+
+    if (**s == '(')
+      break;
+  }
+  --(*s);
+
+  return 0;
+}
+
+int cursor_skip_prev_out_branch_start(cursor *cursor)
+{
+  --(cursor->pos.brnch_cnt);
+  return skip_prev_out_branch_start(&cursor->pos.pos);
+}
+
+int cursor_cycle_back_to_start_atom(cursor *cursor)
+{
+  // we are inside a cycle and at the end of one
+  cursor->pos.cycle_idx = 0;
+
+  if (*cursor->pos.pos == ')')
+    --(cursor->pos.pos);
+  if (cursor_skip_prev_out_branch_start(cursor))
+    return -1;
+
+  // skip the cycle start
+  while (isdigit(*cursor->pos.pos))
+    --(cursor->pos.pos);
+
+  if (*cursor->pos.pos != '*')
+  {
+    eprintf("Expected '*' as cycle start character, but got '%c'\n", *cursor->pos.pos);
     return -1;
   }
+  --(cursor->pos.pos); // skip '*' as cycle's start character
 
-  while (!IS_SPECIAL_CHAR(**s) && **s != '\0')
-    --(*s);
+  if (*cursor->pos.pos == '*')
+    --(cursor->pos.pos); // skip '*' as arced cycle's start character
 
-  ++(*s); // to go back to the first char of the atom
+  if (skip_prev_atom(&cursor->pos.pos))
+    return -1;
 
+  return 0;
+}
+
+int cursor_skip_to_next_atom(cursor *cursor)
+{
+  // store the pos in case we end up at the end of string/branch
+  char *old_pos = cursor->pos.pos;
+
+  if (skip_next_atom(&cursor->pos.pos))
+    return -1;
+
+  if (*cursor->pos.pos == '\0')
+  {
+    cursor->pos.pos = old_pos;
+    return 0;
+  }
+
+  if (*cursor->pos.pos == ')')
+  {
+    if (cursor->pos.brnch_cnt <= 0)
+    {
+      eprintf("Expected cursor->pos.brnch_cnt to be positive: encountered ')'\n");
+      return -1;
+    }
+
+    cursor->pos.pos = old_pos;
+    return 0;
+  }
+
+  if (*cursor->pos.pos == '*')
+  {
+    if (cursor->pos.cycle_cnt > cursor->pos.brnch_cnt)
+    {
+      if (enter_cycle(&cursor->pos.pos, &cursor->pos.cycle_length))
+        return -1;
+      cursor->pos.cycle_idx = 1;
+      if (cursor_enter_branch(cursor, MOVE_POS))
+        return -1;
+      return 0;
+    }
+
+    uint32_t temp;
+    if (enter_cycle(&cursor->pos.pos, &temp))
+      return -1;
+  }
+
+  while (*cursor->pos.pos == '(')
+    if (skip_next_branch(&cursor->pos.pos))
+      return -1;
+
+  if (*cursor->pos.pos == '\0')
+  {
+    cursor->pos.pos = old_pos;
+    TODO("Add support for backtracking into branches/cycles if there is nothing afterwards\n");
+    return 0;
+  }
+
+  if (skip_next_bond(&cursor->pos.pos))
+    return -1;
+
+  if (cursor->pos.cycle_cnt >= cursor->pos.brnch_cnt && cursor->pos.cycle_cnt > 0)
+    ++(cursor->pos.cycle_idx);
+
+  return 0;
+}
+
+int cursor_skip_prev_out_cycle(cursor *cursor)
+{
+  --(cursor->pos.brnch_cnt);
+  --(cursor->pos.cycle_cnt);
+
+  // skip number
+  while (*cursor->pos.pos != '\0' && isdigit(*cursor->pos.pos))
+    --(cursor->pos.pos);
+
+  if (*cursor->pos.pos != '*')
+  {
+    eprintf("Expected '*' as Cycle start symbol, but got %c\n", *cursor->pos.pos);
+    return -1;
+  }
+  --(cursor->pos.pos); // skip said '*'
+
+  if (*cursor->pos.pos == '*')
+    --(cursor->pos.pos); // skip '*' for an arced cycle
+
+  if (cursor->pos.cycle_cnt > 0)
+  {
+    char *new_cycle_length_getter = cursor->pos.pos;
+
+    if (skip_prev_out_branch_start_count(&new_cycle_length_getter, &cursor->pos.cycle_idx))
+      return -1;
+
+    while (isdigit(*new_cycle_length_getter) && *new_cycle_length_getter != '\0')
+      --new_cycle_length_getter;
+    ++new_cycle_length_getter;
+
+    if (sscanf(new_cycle_length_getter, "%u", &cursor->pos.cycle_length) < 1)
+    {
+      eprintf("Could not read the length of the cycle\n"
+              "\t" COLORED_INFO "on ptr: \"%s\"\n",
+              new_cycle_length_getter);
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+int cursor_skip_prev_to_last_atom(cursor *cursor)
+{
+  cursor->mode = MODE_MOVE;
+  char *old_pos = cursor->pos.pos;
+  --(cursor->pos.pos); // to check what comes before
+  if (*cursor->pos.pos == '\0')
+  {
+    // first atom of the molecule
+    ++(cursor->pos.pos);
+    return 0;
+  }
+
+  // try catch philosophy
+  if (skip_prev_bond(&cursor->pos.pos))
+  {
+    fprintf(stderr, COLORED_INFO PRINT_POS "This branch is actually being taken\n", __FILE__, __LINE__, __func__);
+    cursor->pos.pos = old_pos;
+    return 0;
+  }
+
+  if (*cursor->pos.pos == ']')
+  {
+    old_pos = cursor->pos.pos;
+    skip_prev_angle(&cursor->pos.pos);
+    if (*cursor->pos.pos != '(')
+      cursor->pos.pos = old_pos;
+  }
+
+  if (*cursor->pos.pos == '(')
+  {
+    --(cursor->pos.pos);
+    if (cursor->pos.brnch_cnt > cursor->pos.cycle_cnt)
+      --(cursor->pos.brnch_cnt); // exit the branch
+  }
+
+  while (*cursor->pos.pos != '\0' && *cursor->pos.pos == ')')
+    if (skip_prev_branch(&cursor->pos.pos))
+      return -1;
+
+  // some check are redundant
+  if (cursor->pos.pos[1] == '(' &&
+      isdigit(*cursor->pos.pos) &&
+      cursor->pos.cycle_cnt >= cursor->pos.brnch_cnt &&
+      cursor->pos.cycle_idx == 1)
+    if (cursor_skip_prev_out_cycle(cursor))
+      return -1;
+
+  if (skip_prev_atom(&cursor->pos.pos))
+    return -1;
+
+  if (cursor->pos.cycle_cnt > cursor->pos.brnch_cnt)
+    --(cursor->pos.cycle_cnt);
+  if (cursor->pos.cycle_cnt == cursor->pos.brnch_cnt && cursor->pos.cycle_cnt > 0)
+    --(cursor->pos.cycle_idx);
+
+  return 0;
+}
+
+int cursor_skip_to_first_branch(cursor *cursor, CURSOR_MOVE_SELECT mode)
+{
+  cursor_cycle_info *curr = NULL;
+  switch (mode)
+  {
+  case MOVE_POS:
+    curr = &cursor->pos;
+    break;
+  case MOVE_BRPTR:
+    curr = &cursor->branch;
+    break;
+  }
+
+  char *old_pos = cursor->pos.pos;
+  *curr = cursor->pos;
+
+  if (skip_next_atom(&curr->pos))
+    return -1;
+
+  if (*curr->pos == '*')
+  {
+    printf("entered cycle!\n");
+    if (cursor_enter_cycle(cursor, mode))
+      return -1;
+  }
+
+  cursor->mode = MODE_MOVE;
+  if (*curr->pos != '(')
+    curr->pos = old_pos;
+  else
+    cursor->mode = MODE_BR_SELECT;
+
+  return 0;
+}
+
+int cursor_skip_to_last_branch(cursor *cursor, CURSOR_MOVE_SELECT mode)
+{
+  cursor_cycle_info *curr = NULL;
+  switch (mode)
+  {
+  case MOVE_POS:
+    curr = &cursor->pos;
+    break;
+
+  case MOVE_BRPTR:
+    curr = &cursor->branch;
+    break;
+  }
+
+  cursor->mode = MODE_BR_SELECT;
+
+  if (*curr->pos == '*')
+    if (cursor_enter_cycle(cursor, mode))
+      return -1;
+
+  char *prev_pos;
+  do
+  {
+    prev_pos = curr->pos;
+    if (skip_next_branch(&curr->pos))
+      return -1;
+
+    if (*curr->pos == '*')
+      if (cursor_enter_cycle(cursor, mode))
+        return -1;
+
+  } while (*curr->pos == '(');
+  curr->pos = prev_pos;
   return 0;
 }

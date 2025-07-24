@@ -23,7 +23,10 @@
 #define COLORED_ERROR ANSI_RED "[ERROR]" ANSI_RESET
 #define COLORED_WARNING ANSI_YELLOW "[WARNING]" ANSI_RESET
 #define COLORED_INFO ANSI_BLUE "[INFO]" ANSI_RESET
+#define COLORED_TODO ANSI_BLUE "[TODO]" ANSI_RESET
+#define PRINT_POS " %s:%i:%s: "
 
-#define eprintf(string, ...) fprintf(stderr, COLORED_ERROR " %s:%i:%s: " string, __FILE__, __LINE__, __func__ __VA_OPT__(, ) __VA_ARGS__)
+#define eprintf(string, ...) fprintf(stderr, COLORED_ERROR PRINT_POS string, __FILE__, __LINE__, __func__ __VA_OPT__(, ) __VA_ARGS__)
+#define TODO(string, ...) fprintf(stderr, COLORED_TODO PRINT_POS string, __FILE__, __LINE__, __func__ __VA_OPT__(, ) __VA_ARGS__)
 
 #endif // __LOG__

@@ -11,16 +11,27 @@ enum
 
 #define CURSOR_MAX_CYCLE_DEPTH 32
 
-typedef struct cursor_e
+typedef struct cursor_cycle_info_s
 {
   char *pos;
-  char *brptr;
-  uint32_t brptr_cycle;
+  uint32_t cycle_cnt;
+  uint32_t brnch_cnt;
+  uint32_t cycle_idx;
+  uint32_t cycle_length;
+} cursor_cycle_info;
+
+typedef struct cursor_s
+{
+  cursor_cycle_info pos;
+  cursor_cycle_info branch;
   uint8_t mode;
-  uint32_t in_cycle;
-  uint32_t curr_cycle_idx;
-  uint32_t cycles_length[CURSOR_MAX_CYCLE_DEPTH];
 } cursor;
+
+typedef enum CURSOR_MOVE_SELECT_e
+{
+  MOVE_POS,
+  MOVE_BRPTR,
+} CURSOR_MOVE_SELECT;
 
 #define DRAW_CURSOR_TEXT_LEFT 0
 #define DRAW_CURSOR_TEXT_RIGHT 2
@@ -35,18 +46,6 @@ typedef struct draw_cursor_e
 
 #define BASE_DRAW_CURSOR "[\0]"
 
-int handle_key_press(int keycode, cursor *cursor, char *mol);
-
-int skip_to_closing_paren(char **s);
-
-int skip_next_angle(char **s);
-int skip_next_bond(char **s);
-int skip_next_branch(char **s);
-int skip_next_atom(char **s);
-
-int skip_prev_angle(char **s);
-int skip_prev_bond(char **s);
-int skip_prev_branch(char **s);
-int skip_prev_atom(char **s);
+int handle_key_press(int keycode, cursor *cursor);
 
 #endif // __CURSOR__

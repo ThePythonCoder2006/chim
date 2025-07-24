@@ -1,6 +1,9 @@
 #ifndef __MOL__
 #define __MOL__
 
+#include "raylib.h"
+#include "raymath.h"
+
 #include "cursor.h"
 
 enum angle_type_e
@@ -71,8 +74,25 @@ typedef struct mol_s
   mol_work_data work;
 } mol;
 
+typedef enum ret_code_e
+{
+  RET_ERROR = -1,
+  RET_OK,
+  RET_END_OF_BRANCH,
+  RET_OVER,
+} ret_code;
+
 #define IS_CRAM_BOND_CHAR(c) ((c) == '<' || (c) == '>')
 #define IS_BOND_CHAR(c) ((c) == '-' || (c) == '=' || (c) == '~' || IS_CRAM_BOND_CHAR(c))
 #define IS_SPECIAL_CHAR(c) (IS_BOND_CHAR(c) || (c) == '[' || (c) == ']' || (c) == '(' || (c) == ')' || (c) == '*' || (c) == ':')
 
-#endif // __MOL
+extern char g_atom_buffer[ATOM_MAX_LENGTH];
+
+int get_next_atom(mol *mol);
+int DrawMol(mol *mol, Vector2 start_pos, double angle, Font font);
+int DrawMol_inside(mol *mol);
+int DrawBranches(mol *mol);
+
+int create_mol(mol *empty_mol, char *text);
+
+#endif // __MOL__
